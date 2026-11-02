@@ -298,6 +298,9 @@ def ch34x_divisor_register(baud: int) -> int:
 
 RAW_CAPTURE_BYTES = 8192
 RAW_CAPTURE_FILE = "raw_capture.bin"
+# Debug hook: raw capture only runs while this file exists in the app's
+# private files dir (run-as ... touch it, restart the app; delete to stop).
+RAW_CAPTURE_ENABLE_FILE = "raw_capture.enable"
 # Debug hook, in the app's private files dir: {"reg1312": int, "reg0f2c": int}
 # forces those two CH34x baud registers for every rate, so divisor variants
 # can be tried over adb (run-as ... write the file, restart the app) without
@@ -446,7 +449,9 @@ def open_android_link(port: Optional[str] = None, baud: int = DEFAULT_BAUD, inde
     except Exception:
         description = "%s @ %d" % (name, baud)
     files_dir = _android_files_dir()
-    capture_path = os.path.join(files_dir, RAW_CAPTURE_FILE) if files_dir and index == 0 else None
+    capture_path = None
+    if files_dir and index == 0 and os.path.exists(os.path.join(files_dir, RAW_CAPTURE_ENABLE_FILE)):
+        capture_path = os.path.join(files_dir, RAW_CAPTURE_FILE)
     return PortLink(serial_port, description, capture_path=capture_path)
 
 
@@ -480,11 +485,6 @@ def list_matching_desktop_ports() -> list:
                 break
     candidates.sort()
     return [device for _rank, device in candidates]
-
-
-def _autodetect_desktop_port() -> Optional[str]:
-    ports = list_matching_desktop_ports()
-    return ports[0] if ports else None
 
 
 def open_desktop_link(port: Optional[str] = None, baud: int = DEFAULT_BAUD, index: int = 0) -> PortLink:

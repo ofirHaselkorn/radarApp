@@ -22,7 +22,6 @@ import ld2450
 
 SENSOR_LD2410C = "LD2410C"
 SENSOR_LD2450 = "LD2450"
-SENSOR_KINDS = (SENSOR_LD2410C, SENSOR_LD2450)
 
 # Horizontal half-angle of each sensor's useful field of view, in degrees.
 # The LD2410C is one fixed beam with no angle output at all (0 = draw a
