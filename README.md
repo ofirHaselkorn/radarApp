@@ -183,9 +183,9 @@ Other notes:
 - **Bottom line** — each sensor's exact moving/stationary distance and
   energy, plus total frames decoded and dropped.
 
-The reader reconnects by itself every 2 s per sensor after an error or an
-unplug, so the app can be left running while an adapter is pulled and
-reseated.
+There is no connect button: the app connects on launch and the reader
+reconnects by itself every 2 s per sensor after an error or an unplug, so
+the app can be left running while an adapter is pulled and reseated.
 
 ## Field log
 
@@ -221,6 +221,13 @@ storage (Android).
 - **A detection is held for 350 ms** after the last frame reporting it. The
   sensor flickers between states at 15 Hz and the display would otherwise
   strobe; raw per-frame values are still available on the callback.
+- **LD2450 positions are smoothed and held for display**
+  (`ld2450.TargetSmoother`). Through a door the X/Y jitters by tens of cm
+  and weak targets drop out for a few frames, so each target slot is
+  exponentially smoothed (alpha 0.35, snapping instead on a jump > 80 cm,
+  which means a different person) and a lost target stays at its last
+  position for 1 s, drawn amber and marked `?` in the target line. The
+  field log still records the raw frames.
 - **The scope never draws coverage that isn't configured.** No rotating
   sweep (it would be purely decorative -- nothing here is scanned), no
   generic crosshair implying four-way coverage. Only the bearings passed to

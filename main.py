@@ -53,7 +53,7 @@ from kivy.uix.boxlayout import BoxLayout  # noqa: E402
 import ld2410  # noqa: E402
 from fieldlog import FieldLogger  # noqa: E402
 from ld2410 import LD2410Reader, TargetFrame  # noqa: E402
-from ld2450 import TrajectoryFrame  # noqa: E402
+from ld2450 import TargetSmoother, TrajectoryFrame  # noqa: E402
 from radar_scope import RadarScope  # noqa: E402
 from sensor_array import SensorConfig, parse_sensor_spec  # noqa: E402
 from sensor_detect import (  # noqa: E402
@@ -167,19 +167,6 @@ KV = """
         halign: 'center'
         valign: 'middle'
         text_size: self.size
-
-    Button:
-        id: connect_button
-        size_hint_y: None
-        height: dp(48)
-        text: root.button_text
-        font_size: dp(15)
-        bold: True
-        background_normal: ''
-        background_down: ''
-        background_color: 0.09, 0.10, 0.09, 1
-        color: 0.55, 0.58, 0.55, 1
-        on_release: app.toggle_connection()
 """
 
 
@@ -193,7 +180,6 @@ class RadarRoot(BoxLayout):
     status_color = ListProperty(list(GREY))
     chrome_color = ListProperty(list(DIMMER))
     telemetry_text = StringProperty("")
-    button_text = StringProperty("CONNECT")
 
 
 class _SensorTrack:
@@ -206,6 +192,9 @@ class _SensorTrack:
         self.index = index
         self.reader: Optional[LD2410Reader] = None
         self.frame: Optional[object] = None  # TargetFrame or TrajectoryFrame
+        # LD2450 display smoothing; smoothed_frame is the last frame fed to it.
+        self.smoother = TargetSmoother()
+        self.smoothed_frame: Optional[object] = None
         # Detected sensor type (sensor_detect.SENSOR_*), None until frames lock on.
         self.kind: Optional[str] = None
         self.status = (ld2410.STATUS_STOPPED, "standby")
@@ -303,16 +292,10 @@ class RadarApp(App):
                 reader.stop()
             track.frame = None
             track.kind = None
+            track.smoother.reset()
             track.status = (ld2410.STATUS_STOPPED, "disconnected")
         if self.root_widget is not None:
             self.root_widget.ids.scope.reset()
-
-    def toggle_connection(self) -> None:
-        any_running = any(t.reader is not None and t.reader.is_running for t in self._tracks)
-        if any_running:
-            self.disconnect()
-        else:
-            self.connect()
 
     def toggle_demo_mode(self) -> None:
         """Step to the next of real / mock LD2410C / mock LD2450.
@@ -358,7 +341,6 @@ class RadarApp(App):
         status_parts = []
         target_parts = []
         worst_severity, worst_color = -1, GREY
-        any_running = False
 
         for track in self._tracks:
             if now - track.rate_mark >= 1.0:
@@ -368,7 +350,6 @@ class RadarApp(App):
 
             state, detail = track.status
             running = track.reader is not None and track.reader.is_running
-            any_running = any_running or running
             link_up = running and (now - track.last_frame_time) < LINK_TIMEOUT
 
             if not running:
@@ -386,21 +367,27 @@ class RadarApp(App):
             kind = track.reader.parser.kind if track.reader is not None else None
             if kind != track.kind:
                 track.kind = kind
+                track.smoother.reset()
                 scope.reset(track.config.name)
                 scope.set_field_of_view(track.config.name, FIELD_OF_VIEW_HALF_DEG.get(kind, 0.0))
 
             frame = track.frame
             if link_up and isinstance(frame, TrajectoryFrame):
-                active = [(i + 1, t) for i, t in enumerate(frame.targets) if t.present]
+                if frame is not track.smoothed_frame:
+                    track.smoother.update(frame)
+                    track.smoothed_frame = frame
+                active = track.smoother.targets(now)
                 scope.plot_targets(
                     track.config.name,
-                    [(slot, t.distance_cm, t.bearing_deg, t.speed_cms != 0) for slot, t in active],
-                    now=frame.timestamp,
+                    [(t.slot, t.distance_cm, t.bearing_deg, t.speed_cms != 0) for t in active],
+                    now=now,
                 )
                 prefix = "%s " % track.config.name if multi else ""
+                # "?" marks a target the sensor just lost: last known position.
                 target_parts += [
-                    "%sT%d %.1fm %+.0f°" % (prefix, slot, t.distance_cm / 100.0, t.bearing_deg)
-                    for slot, t in active
+                    "%sT%d %.1fm %+.0f°%s" % (prefix, t.slot, t.distance_cm / 100.0, t.bearing_deg,
+                                              "?" if t.held else "")
+                    for t in active
                 ]
             elif link_up and isinstance(frame, TargetFrame):
                 scope.plot(
@@ -416,7 +403,6 @@ class RadarApp(App):
         root.sensor_text = " + ".join(kinds) if kinds else "RADAR"
         root.targets_text = "   ".join(target_parts)
 
-        root.button_text = "DISCONNECT" if any_running else "CONNECT"
         root.status_text = "   ".join(status_parts) if status_parts else "STANDBY"
         root.status_color = list(worst_color)
 

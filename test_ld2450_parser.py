@@ -136,6 +136,50 @@ def test_verify_sign_convention_helper():
         check("bad direction raises", True)
 
 
+def _frame(targets, t):
+    return parse_frame_body(build_report_frame(targets)[4:-2], timestamp=t)
+
+
+def test_smoother_first_reading_is_exact():
+    sm = ld2450.TargetSmoother()
+    sm.update(_frame([(300, 2000, 0)], 0.0))
+    (t,) = sm.targets(0.0)
+    check("first reading not smoothed", (t.x_mm, t.y_mm) == (300, 2000) and t.slot == 1 and not t.held)
+
+
+def test_smoother_damps_jitter():
+    sm = ld2450.TargetSmoother(alpha=0.5)
+    sm.update(_frame([(0, 2000, 0)], 0.0))
+    sm.update(_frame([(200, 2000, 0)], 0.1))
+    (t,) = sm.targets(0.1)
+    check("jitter halved at alpha 0.5", t.x_mm == 100)
+
+
+def test_smoother_resets_on_big_jump():
+    sm = ld2450.TargetSmoother(alpha=0.5)
+    sm.update(_frame([(0, 1000, 0)], 0.0))
+    sm.update(_frame([(0, 3000, 0)], 0.1))
+    (t,) = sm.targets(0.1)
+    check("big jump snaps instead of sliding", t.y_mm == 3000)
+
+
+def test_smoother_holds_then_drops():
+    sm = ld2450.TargetSmoother(hold_seconds=1.0)
+    sm.update(_frame([(0, 2000, 25)], 0.0))
+    sm.update(_frame([], 0.5))
+    (t,) = sm.targets(0.5)
+    check("lost target held at last position", t.held and t.y_mm == 2000)
+    check("held target reported as not moving", t.speed_cms == 0)
+    check("held target gone after hold time", sm.targets(1.2) == [])
+
+
+def test_smoother_reset():
+    sm = ld2450.TargetSmoother()
+    sm.update(_frame([(0, 2000, 0)], 0.0))
+    sm.reset()
+    check("reset clears targets", sm.targets(0.0) == [])
+
+
 if __name__ == "__main__":
     for name, fn in sorted(list(globals().items())):
         if name.startswith("test_"):

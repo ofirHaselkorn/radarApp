@@ -49,7 +49,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 FRAME_HEADER = b"\xaa\xff\x03\x00"
 FRAME_TAIL = b"\x55\xcc"
@@ -226,6 +226,79 @@ class FrameParser:
                 frames.append(frame)
 
         return frames
+
+
+# Display smoothing. Through a door or wall the reported position jitters by
+# tens of cm frame to frame and a weak target drops out for a few frames at
+# a time; these turn that into a steady dot that stays put briefly when lost.
+SMOOTHING_ALPHA = 0.35      # weight of each new reading (~0.25 s lag at ~11 Hz)
+HOLD_SECONDS = 1.0          # keep showing a target this long after it drops out
+JUMP_RESET_MM = 800         # a bigger jump is a different person in that slot
+
+
+@dataclass(frozen=True)
+class SmoothedTarget:
+    """A display position for one target slot. held=True means the sensor
+    stopped reporting it and this is its last known position."""
+
+    slot: int
+    x_mm: float
+    y_mm: float
+    speed_cms: int
+    last_seen: float
+    held: bool = False
+
+    @property
+    def distance_cm(self) -> float:
+        return math.hypot(self.x_mm, self.y_mm) / 10.0
+
+    @property
+    def bearing_deg(self) -> float:
+        return math.degrees(math.atan2(self.x_mm, self.y_mm))
+
+
+class TargetSmoother:
+    """Per-slot exponential smoothing plus a short hold, for display only --
+    raw frames (and the field log) are untouched. Feed each new frame once
+    with update(); read targets(now) as often as the UI redraws."""
+
+    def __init__(self, alpha: float = SMOOTHING_ALPHA, hold_seconds: float = HOLD_SECONDS,
+                 jump_reset_mm: float = JUMP_RESET_MM):
+        self.alpha = alpha
+        self.hold_seconds = hold_seconds
+        self.jump_reset_mm = jump_reset_mm
+        self._slots: Dict[int, SmoothedTarget] = {}
+        self._latest = 0.0
+
+    def reset(self) -> None:
+        self._slots.clear()
+        self._latest = 0.0
+
+    def update(self, frame: TrajectoryFrame) -> None:
+        self._latest = frame.timestamp
+        for index, target in enumerate(frame.targets):
+            if not target.present:
+                continue
+            slot = index + 1
+            prev = self._slots.get(slot)
+            if prev is None or math.hypot(target.x_mm - prev.x_mm, target.y_mm - prev.y_mm) > self.jump_reset_mm:
+                x, y = float(target.x_mm), float(target.y_mm)
+            else:
+                x = prev.x_mm + self.alpha * (target.x_mm - prev.x_mm)
+                y = prev.y_mm + self.alpha * (target.y_mm - prev.y_mm)
+            self._slots[slot] = SmoothedTarget(slot, x, y, target.speed_cms, frame.timestamp)
+
+    def targets(self, now: float) -> List[SmoothedTarget]:
+        out = []
+        for slot in sorted(self._slots):
+            tracked = self._slots[slot]
+            if now - tracked.last_seen > self.hold_seconds:
+                del self._slots[slot]
+                continue
+            held = tracked.last_seen < self._latest
+            out.append(SmoothedTarget(slot, tracked.x_mm, tracked.y_mm,
+                                      0 if held else tracked.speed_cms, tracked.last_seen, held))
+        return out
 
 
 def verify_sign_convention(x_mm: int, known_direction: str) -> bool:
