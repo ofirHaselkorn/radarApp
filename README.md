@@ -19,6 +19,8 @@ configure_sensor.py     CLI for ld2410_config.py: set-gates, set-sensitivity, re
 test_parser.py          34 LD2410C data-protocol checks: python test_parser.py
 test_ld2450_parser.py   34 LD2450 protocol checks: python test_ld2450_parser.py
 test_ld2410_config.py   34 LD2410C command-protocol checks: python test_ld2410_config.py
+sensor_detect.py        tells LD2410C and LD2450 apart from the frames themselves
+test_sensor_detect.py   19 sensor auto-detection checks: python test_sensor_detect.py
 buildozer.spec          Android packaging (see "Android build" below -- the version pins matter)
 device_filter.xml       USB vendor ids the APK claims
 usb_intent_filter.xml   auto-launch on adapter attach
@@ -32,12 +34,11 @@ the scope draws that as a configured line, not a measurement.
 
 **LD2450** -- multiple receive antennas, reports real X/Y position (so real
 distance *and* real angle) for up to 3 targets at once, ±60° in front of it.
-**Not yet wired into the UI.** `ld2450.py` parses its frames and is
-thoroughly tested against synthetic data, but the wire protocol was built
-from community reverse-engineering, not a datasheet pasted into this
-project -- one detail (the sign convention on X/Y/speed) needs a real-
-hardware check before the scope trusts it. The moment the sensor is wired
-up:
+Wired into the UI and verified on real hardware (PC and phone, same
+256000 baud CH34x settings as the LD2410C). The wire protocol was built
+from community reverse-engineering, not a datasheet, and one detail -- the
+X sign convention (is negative X really left?) -- still needs a real-
+hardware check. Stand clearly to one side of the sensor and run:
 
 ```bash
 python inspect_serial.py --port COM5          # confirm it's really binary, not ASCII
@@ -173,6 +174,11 @@ app, normal for a sideloaded APK).
 
 Other notes:
 
+- Two debug hooks live in the app's private files dir (reach it with
+  `adb shell run-as org.tactical.ld2410tactical`, restart the app after
+  changing them): `ch34x_baud.json` (`{"reg1312": ..., "reg0f2c": ...}`)
+  forces the CH34x baud registers, and an empty `raw_capture.enable` makes
+  the app dump the first 8 KB of each connection to `raw_capture.bin`.
 - `android.add_resources` in `buildozer.spec` needs buildozer >= 1.5. On an
   older version, drop `device_filter.xml` into
   `.buildozer/android/platform/build-*/dists/*/src/main/res/xml/` before the
