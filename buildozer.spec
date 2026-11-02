@@ -6,10 +6,10 @@ package.domain = org.tactical
 
 source.dir = .
 source.include_exts = py,kv,xml,png,jpg,atlas
-# test_*.py: never needed at runtime. inspect_serial.py/configure_sensor.py:
-# standalone CLI tools meant to be run directly from a desktop terminal with
+# test_*.py: never needed at runtime. inspect_serial.py: standalone CLI
+# tool meant to be run directly from a desktop terminal with
 # --port args, not useful bundled behind main.py's single entry point.
-source.exclude_patterns = test_*.py,inspect_serial.py,configure_sensor.py,README.md,bin/*,.buildozer/*,logs/*
+source.exclude_patterns = test_*.py,inspect_serial.py,README.md,bin/*,.buildozer/*,logs/*
 
 version = 1.0
 

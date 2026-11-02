@@ -8,17 +8,14 @@ line, and a glowing blip with a short fading trail for every detection.
 ```
 ld2410.py               LD2410C data protocol: frame parser + background reader thread
 ld2450.py               LD2450 data protocol: frame parser (see "Two sensor types" below)
-ld2410_config.py        LD2410C command protocol: change gates/sensitivity, read firmware, restart
 serial_backend.py       one serial API over Android usb4a, desktop pyserial, and a mock sensor
 sensor_array.py         multi-sensor config: name + bearing (+ optional port) per sensor
 radar_scope.py          the Kivy scope widget: rings, bearing lines, blips, trails
 fieldlog.py             rotating log of state transitions + connection status
 main.py                 Kivy "tactical dark" UI
 inspect_serial.py       raw serial hexdump + verdict -- run this first against new hardware
-configure_sensor.py     CLI for ld2410_config.py: set-gates, set-sensitivity, read, firmware, restart
 test_parser.py          34 LD2410C data-protocol checks: python test_parser.py
 test_ld2450_parser.py   34 LD2450 protocol checks: python test_ld2450_parser.py
-test_ld2410_config.py   34 LD2410C command-protocol checks: python test_ld2410_config.py
 sensor_detect.py        tells LD2410C and LD2450 apart from the frames themselves
 test_sensor_detect.py   19 sensor auto-detection checks: python test_sensor_detect.py
 buildozer.spec          Android packaging (see "Android build" below -- the version pins matter)
@@ -60,30 +57,6 @@ they look like LD2410C frames, LD2450 frames, or neither -- run it against
 
 Both sensors use the same link settings: **256000 baud, 8N1**. They stream
 frames on their own; no command has to be sent to start either one.
-
-## Configuring the LD2410C
-
-`main.py` only *reads* the sensor. To change its settings -- max detection
-distance, per-gate sensitivity, or to restart/factory-reset it -- use the
-standalone CLI, which needs the port to itself (the sensor stops streaming
-ordinary data frames during a config session, so close `main.py` first):
-
-```bash
-python configure_sensor.py --port COM5 read
-python configure_sensor.py --port COM5 set-gates --moving 8 --static 6 --duration 5
-python configure_sensor.py --port COM5 set-sensitivity --gate all --motion 50 --static 40
-python configure_sensor.py --port COM5 firmware
-python configure_sensor.py --port COM5 restart
-```
-
-This talks a completely different frame format from the data stream
-(`FD FC FB FA` / `04 03 02 01`, not `F4 F3 F2 F1` / `F8 F7 F6 F5`) --
-Hi-Link's documented command protocol, implemented in `ld2410_config.py`.
-Unlike the LD2450 situation, this one is high-confidence: it's consistently
-implemented the same way across several independent open-source projects,
-not reverse-engineered from scratch. The one soft spot is
-`read_firmware_version()` returning raw bytes instead of a parsed version
-string -- see its docstring for why.
 
 ## Run
 

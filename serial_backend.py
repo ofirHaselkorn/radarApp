@@ -3,8 +3,8 @@
 Every link exposes the slice of the pyserial API callers need:
 
     link.read(max_bytes) -> bytes   (returns b"" on timeout, never blocks long)
-    link.write(data: bytes) -> None (only needed for ld2410_config.py's commands;
-                                      the normal read-only data stream never calls it)
+    link.write(data: bytes) -> None (only for sending sensor commands; the
+                                      normal read-only data stream never calls it)
     link.close()
     link.description                (human readable, shown in the UI)
 
@@ -94,8 +94,8 @@ class PortLink:
         return data
 
     def write(self, data: bytes) -> None:
-        """Only needed for sending commands (ld2410_config.py); the normal
-        read-only data-streaming path (LD2410Reader) never calls this."""
+        """Only needed for sending sensor commands; the normal read-only
+        data-streaming path (LD2410Reader) never calls this."""
         self._port.write(data)
 
     def close(self) -> None:
@@ -166,9 +166,8 @@ class MockLink:
         return build_basic_frame(STATE_NO_TARGET)  # clear
 
     def write(self, data: bytes) -> None:
-        # The mock has no config state machine to drive -- ld2410_config.py
-        # against a MockLink would just time out waiting for an ACK that
-        # never comes, which is honest (there's nothing real to configure).
+        # The mock has no config state machine: commands are dropped, so a
+        # caller waiting for an ACK times out (nothing real to configure).
         pass
 
     def close(self) -> None:
