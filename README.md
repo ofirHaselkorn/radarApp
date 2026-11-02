@@ -176,7 +176,9 @@ Other notes:
   direction), a line for each sensor's real configured bearing (nothing
   elsewhere implies coverage), and a blip per detection: **red** for moving,
   **amber** for stationary, with a short fading trail so movement toward or
-  away from the sensor is visible, not just a jumping number.
+  away from the sensor is visible, not just a jumping number. A **faint
+  ring** instead of a blip is an LD2450 target that is probably a wall
+  reflection (echo) of a nearer one -- see Design notes; it is never hidden.
 - **Big number** — distance in centimetres for whichever target is closest
   right now (tagged with its sensor's name in a multi-sensor setup), red
   while held, dim grey and `---` when clear.
@@ -196,6 +198,16 @@ every frame -- at 15 Hz that would be thousands of lines a minute for no
 benefit. Also logs every connection status change. One file per run,
 rotated at 2 MB x 5 backups, under `./logs` (desktop) or the app's private
 storage (Android).
+
+**REC** (top bar) is separate: tap it to save *every* LD2450 frame, raw, to
+`logs/recordings/rec_<date>_<time>.csv` (columns `t,sensor,x1,y1,s1,...`,
+mm and cm/s) until tapped again; it shows the frame count while recording.
+For tuning the smoothing and echo rules against real data. On the phone:
+
+```bash
+adb shell run-as org.tactical.ld2410tactical ls files/logs/recordings
+adb exec-out run-as org.tactical.ld2410tactical cat files/logs/recordings/<file> > rec.csv
+```
 
 ## Design notes
 
@@ -228,6 +240,15 @@ storage (Android).
   which means a different person) and a lost target stays at its last
   position for 1 s, drawn amber and marked `?` in the target line. The
   field log still records the raw frames.
+- **Likely echoes are flagged, never hidden.** A wall reflects a real
+  person back as an extra, farther target whose distance changes in step
+  with theirs. If a target is >= 30 cm farther than another, the nearer one
+  is really moving, and their last ~2 s of distances correlate (|r| >= 0.7),
+  the farther one is drawn as a faint ring and marked `~`. The field use
+  (sensor pressed to a door, room unknown) rules out any per-room setup,
+  and a person standing still looks like a fan to the sensor, so nothing is
+  ever removed: a spare faded dot is safer than a missed person. The
+  thresholds in `ld2450.py` are first guesses until tuned on recordings.
 - **The scope never draws coverage that isn't configured.** No rotating
   sweep (it would be purely decorative -- nothing here is scanned), no
   generic crosshair implying four-way coverage. Only the bearings passed to

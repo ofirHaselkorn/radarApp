@@ -64,6 +64,8 @@ class TrailPoint(NamedTuple):
     # "use the sensor's configured bearing and the trail's own colour".
     bearing_deg: Optional[float] = None
     moving: Optional[bool] = None
+    # Likely reflection of another target: drawn as a faint ring, not a blip.
+    echo: bool = False
 
 
 def _minimal_sector(bearings_deg, min_span: float = MIN_SECTOR_SPAN_DEG, margin: float = SECTOR_MARGIN_DEG):
@@ -207,15 +209,16 @@ class RadarScope(Widget):
     def plot_targets(self, sensor_name: str, targets, now: Optional[float] = None) -> None:
         """Record this tick's positioned targets for one sensor (LD2450).
 
-        targets: iterable of (slot, distance_cm, bearing_deg, moving) where
-        bearing_deg is relative to the sensor's own facing (0 = straight
+        targets: iterable of (slot, distance_cm, bearing_deg, moving[, echo])
+        where bearing_deg is relative to the sensor's own facing (0 = straight
         out of it, clockwise positive). Each slot keeps its own trail.
         """
         now = time.time() if now is None else now
         mount = self._bearings.get(sensor_name, 0.0)
-        for slot, distance_cm, bearing_deg, moving in targets:
+        for slot, distance_cm, bearing_deg, moving, *rest in targets:
             self._trail(sensor_name, "target%d" % slot).append(
-                TrailPoint(distance_cm, XY_TARGET_ENERGY, now, mount + bearing_deg, bool(moving))
+                TrailPoint(distance_cm, XY_TARGET_ENERGY, now, mount + bearing_deg, bool(moving),
+                           bool(rest and rest[0]))
             )
 
     def refresh(self, now: Optional[float] = None) -> None:
@@ -408,6 +411,11 @@ class RadarScope(Widget):
                 color = MOVING_COLOR if point.moving else STATIONARY_COLOR
             energy_scale = 0.4 + 0.6 * max(0, min(100, point.energy)) / 100.0
             radius = (7.0 if is_latest else 4.0) * energy_scale * (0.5 + 0.5 * fade)
+            if point.echo:
+                if is_latest:
+                    Color(*color, 0.55)
+                    Line(circle=(x, y, radius * 1.3), width=1.2)
+                continue
             Color(*color, fade if not is_latest else min(1.0, fade + 0.3))
             Ellipse(pos=(x - radius, y - radius), size=(radius * 2, radius * 2))
             if is_latest:

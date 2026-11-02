@@ -48,8 +48,9 @@ from __future__ import annotations
 
 import math
 import time
+from collections import deque
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Deque, Dict, List, Optional, Tuple
 
 FRAME_HEADER = b"\xaa\xff\x03\x00"
 FRAME_TAIL = b"\x55\xcc"
@@ -235,11 +236,35 @@ SMOOTHING_ALPHA = 0.35      # weight of each new reading (~0.25 s lag at ~11 Hz)
 HOLD_SECONDS = 1.0          # keep showing a target this long after it drops out
 JUMP_RESET_MM = 800         # a bigger jump is a different person in that slot
 
+# Echo flagging. A wall reflection of a real person shows up as an extra,
+# farther target whose distance changes in step with that person's. No room
+# setup is possible in the field, so this is the only cue used, and an echo is
+# only ever drawn faded, never hidden: hiding a real person is the worse
+# mistake. Initial guesses -- tune against recordings (FrameRecorder).
+ECHO_WINDOW_SECONDS = 2.0   # how much recent motion to compare
+ECHO_MIN_SAMPLES = 8        # frames both targets must share in that window
+ECHO_MIN_MOTION_MM = 50     # the nearer target must actually be moving (std dev)
+ECHO_MIN_GAP_MM = 300       # the echo must be at least this much farther away
+ECHO_MIN_CORRELATION = 0.7  # |correlation| of the two distance histories
+
+
+def _correlation(a: List[float], b: List[float]) -> float:
+    n = len(a)
+    mean_a, mean_b = sum(a) / n, sum(b) / n
+    cov = sum((x - mean_a) * (y - mean_b) for x, y in zip(a, b))
+    var_a = sum((x - mean_a) ** 2 for x in a)
+    var_b = sum((y - mean_b) ** 2 for y in b)
+    if var_a <= 0 or var_b <= 0:
+        return 0.0
+    return cov / math.sqrt(var_a * var_b)
+
 
 @dataclass(frozen=True)
 class SmoothedTarget:
     """A display position for one target slot. held=True means the sensor
-    stopped reporting it and this is its last known position."""
+    stopped reporting it and this is its last known position. echo=True
+    means it moves in step with a nearer target: probably that target's
+    reflection off a wall, so it is drawn faded (never hidden)."""
 
     slot: int
     x_mm: float
@@ -247,6 +272,7 @@ class SmoothedTarget:
     speed_cms: int
     last_seen: float
     held: bool = False
+    echo: bool = False
 
     @property
     def distance_cm(self) -> float:
@@ -268,10 +294,13 @@ class TargetSmoother:
         self.hold_seconds = hold_seconds
         self.jump_reset_mm = jump_reset_mm
         self._slots: Dict[int, SmoothedTarget] = {}
+        # Raw (timestamp, distance_mm) per slot, for echo detection.
+        self._history: Dict[int, Deque[Tuple[float, float]]] = {}
         self._latest = 0.0
 
     def reset(self) -> None:
         self._slots.clear()
+        self._history.clear()
         self._latest = 0.0
 
     def update(self, frame: TrajectoryFrame) -> None:
@@ -283,10 +312,15 @@ class TargetSmoother:
             prev = self._slots.get(slot)
             if prev is None or math.hypot(target.x_mm - prev.x_mm, target.y_mm - prev.y_mm) > self.jump_reset_mm:
                 x, y = float(target.x_mm), float(target.y_mm)
+                self._history[slot] = deque()
             else:
                 x = prev.x_mm + self.alpha * (target.x_mm - prev.x_mm)
                 y = prev.y_mm + self.alpha * (target.y_mm - prev.y_mm)
             self._slots[slot] = SmoothedTarget(slot, x, y, target.speed_cms, frame.timestamp)
+            history = self._history.setdefault(slot, deque())
+            history.append((frame.timestamp, target.distance_mm))
+            while history and frame.timestamp - history[0][0] > ECHO_WINDOW_SECONDS:
+                history.popleft()
 
     def targets(self, now: float) -> List[SmoothedTarget]:
         out = []
@@ -294,11 +328,35 @@ class TargetSmoother:
             tracked = self._slots[slot]
             if now - tracked.last_seen > self.hold_seconds:
                 del self._slots[slot]
+                self._history.pop(slot, None)
                 continue
             held = tracked.last_seen < self._latest
             out.append(SmoothedTarget(slot, tracked.x_mm, tracked.y_mm,
                                       0 if held else tracked.speed_cms, tracked.last_seen, held))
-        return out
+        live = [t for t in out if not t.held]
+        return [
+            SmoothedTarget(t.slot, t.x_mm, t.y_mm, t.speed_cms, t.last_seen, t.held, echo=True)
+            if not t.held and any(self._is_echo_of(t.slot, near.slot) for near in live if near.slot != t.slot)
+            else t
+            for t in out
+        ]
+
+    def _is_echo_of(self, far_slot: int, near_slot: int) -> bool:
+        """True if far_slot's target looks like a reflection of near_slot's:
+        clearly farther away, and its distance moved in step (or in exact
+        opposition) with the nearer one while the nearer one was moving."""
+        near = dict(self._history.get(near_slot, ()))
+        pairs = [(near[t], d) for t, d in self._history.get(far_slot, ()) if t in near]
+        if len(pairs) < ECHO_MIN_SAMPLES:
+            return False
+        near_d = [p[0] for p in pairs]
+        far_d = [p[1] for p in pairs]
+        if far_d[-1] - near_d[-1] < ECHO_MIN_GAP_MM:
+            return False
+        mean = sum(near_d) / len(near_d)
+        if math.sqrt(sum((d - mean) ** 2 for d in near_d) / len(near_d)) < ECHO_MIN_MOTION_MM:
+            return False
+        return abs(_correlation(near_d, far_d)) >= ECHO_MIN_CORRELATION
 
 
 def verify_sign_convention(x_mm: int, known_direction: str) -> bool:

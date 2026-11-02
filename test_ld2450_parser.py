@@ -180,6 +180,56 @@ def test_smoother_reset():
     check("reset clears targets", sm.targets(0.0) == [])
 
 
+def _walk(sm, far_of, frames=15, step_mm=40):
+    """One person walking straight away from the sensor, plus a second
+    target whose distance far_of(i, near_y) gives; returns targets()."""
+    for i in range(frames):
+        near_y = 1000 + i * step_mm
+        sm.update(_frame([(0, near_y, 20), (0, far_of(i, near_y), 0)], i * 0.09))
+    return sm.targets((frames - 1) * 0.09)
+
+
+def test_echo_flagged_when_moving_in_step():
+    near, far = _walk(ld2450.TargetSmoother(), lambda i, y: y + 1500)
+    check("farther in-step target flagged as echo", far.echo)
+    check("nearer target never flagged", not near.echo)
+
+
+def test_echo_not_flagged_for_independent_target():
+    wobble = [0, 30, -20, 10, -30, 25, 0, -10, 20, -25, 15, 5, -15, 30, -5]
+    near, far = _walk(ld2450.TargetSmoother(), lambda i, y: 3000 + wobble[i])
+    check("unrelated still target not an echo", not near.echo and not far.echo)
+
+
+def test_echo_not_flagged_when_nearer_is_still():
+    sm = ld2450.TargetSmoother()
+    for i in range(15):
+        sm.update(_frame([(0, 1000 + (i % 2) * 10, 0), (0, 2500 + (i % 2) * 10, 0)], i * 0.09))
+    check("no echo call without real motion", not any(t.echo for t in sm.targets(14 * 0.09)))
+
+
+def test_echo_needs_enough_history():
+    near, far = _walk(ld2450.TargetSmoother(), lambda i, y: y + 1500, frames=5)
+    check("too little history is never an echo", not far.echo)
+
+
+def test_frame_recorder_writes_csv():
+    import tempfile
+    from pathlib import Path
+
+    from fieldlog import FrameRecorder
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = FrameRecorder(log_dir=Path(tmp))
+        rec.on_frame(_frame([(-120, 2300, 15)], 12.5), sensor="S1")
+        rec.close()
+        rec.on_frame(_frame([(1, 1, 1)], 13.0), sensor="S1")  # after close: ignored
+        lines = rec.path.read_text(encoding="utf-8").splitlines()
+    check("recorder header", lines[0] == "t,sensor,x1,y1,s1,x2,y2,s2,x3,y3,s3")
+    check("recorder row", lines[1] == "12.500,S1,-120,2300,15,0,0,0,0,0,0")
+    check("recorder ignores frames after close", len(lines) == 2 and rec.frames == 1)
+
+
 if __name__ == "__main__":
     for name, fn in sorted(list(globals().items())):
         if name.startswith("test_"):

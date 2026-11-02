@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -39,6 +40,41 @@ def default_log_dir() -> Path:
     except Exception:
         pass
     return Path(__file__).resolve().parent / "logs"
+
+
+class FrameRecorder:
+    """Every LD2450 frame, raw, to a CSV under <log dir>/recordings -- one
+    file per recording. For tuning display rules (smoothing, echo flags)
+    against real data offline; the field log above is too sparse for that.
+    on_frame runs on reader threads, close on the UI thread, hence the lock.
+    """
+
+    def __init__(self, log_dir: Optional[Path] = None):
+        directory = (Path(log_dir) if log_dir else default_log_dir()) / "recordings"
+        directory.mkdir(parents=True, exist_ok=True)
+        self.path = directory / time.strftime("rec_%Y%m%d_%H%M%S.csv")
+        self._lock = threading.Lock()
+        self._fh = open(self.path, "w", encoding="utf-8", newline="")
+        self._fh.write("t,sensor,x1,y1,s1,x2,y2,s2,x3,y3,s3\n")
+        self.frames = 0
+
+    def on_frame(self, frame, sensor: str = "") -> None:
+        targets = getattr(frame, "targets", None)
+        if targets is None:
+            return  # LD2410C frames have no positions to record
+        fields = ["%.3f" % frame.timestamp, sensor]
+        for target in targets:
+            fields += [str(target.x_mm), str(target.y_mm), str(target.speed_cms)]
+        with self._lock:
+            if self._fh is not None:
+                self._fh.write(",".join(fields) + "\n")
+                self.frames += 1
+
+    def close(self) -> None:
+        with self._lock:
+            if self._fh is not None:
+                self._fh.close()
+                self._fh = None
 
 
 def _build_logger(log_dir: Path, max_bytes: int, backups: int) -> logging.Logger:

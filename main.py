@@ -51,7 +51,7 @@ from kivy.properties import ListProperty, StringProperty  # noqa: E402
 from kivy.uix.boxlayout import BoxLayout  # noqa: E402
 
 import ld2410  # noqa: E402
-from fieldlog import FieldLogger  # noqa: E402
+from fieldlog import FieldLogger, FrameRecorder  # noqa: E402
 from ld2410 import LD2410Reader, TargetFrame  # noqa: E402
 from ld2450 import TargetSmoother, TrajectoryFrame  # noqa: E402
 from radar_scope import RadarScope  # noqa: E402
@@ -113,6 +113,17 @@ KV = """
             halign: 'left'
             valign: 'middle'
             text_size: self.size
+        Button:
+            size_hint_x: None
+            width: dp(84)
+            text: root.rec_text
+            font_size: dp(12)
+            bold: True
+            background_normal: ''
+            background_down: ''
+            background_color: 0, 0, 0, 0
+            color: root.rec_color
+            on_release: app.toggle_recording()
         Button:
             text: root.backend_name
             font_size: dp(12)
@@ -176,6 +187,8 @@ class RadarRoot(BoxLayout):
     backend_name = StringProperty("")
     sensor_text = StringProperty("RADAR")
     targets_text = StringProperty("")
+    rec_text = StringProperty("REC")
+    rec_color = ListProperty([0.40, 0.42, 0.40, 1])
     status_text = StringProperty("STANDBY")
     status_color = ListProperty(list(GREY))
     chrome_color = ListProperty(list(DIMMER))
@@ -217,6 +230,7 @@ class RadarApp(App):
         self._mock = mock
         self._log_enabled = log_enabled
         self._field_log: Optional[FieldLogger] = None
+        self._recorder: Optional[FrameRecorder] = None
         self.root_widget: Optional[RadarRoot] = None
         self._tracks: List[_SensorTrack] = [
             _SensorTrack(config, i) for i, config in enumerate(sensors)
@@ -254,6 +268,7 @@ class RadarApp(App):
 
     def on_stop(self):
         self.disconnect()
+        self._stop_recording()
         if self._field_log is not None:
             self._field_log.close()
             self._field_log = None
@@ -311,6 +326,22 @@ class RadarApp(App):
         if was_running:
             self.connect()
 
+    # -- recording ---------------------------------------------------------
+    def toggle_recording(self) -> None:
+        """Save every frame to a CSV until tapped again (for tuning)."""
+        if self._recorder is not None:
+            self._stop_recording()
+            return
+        try:
+            self._recorder = FrameRecorder()
+        except Exception:
+            self._recorder = None  # storage trouble must not take the app down
+
+    def _stop_recording(self) -> None:
+        recorder, self._recorder = self._recorder, None
+        if recorder is not None:
+            recorder.close()
+
     # -- reader thread callbacks (keep these cheap, no UI access) ---------
     def _on_frame(self, track: _SensorTrack, frame) -> None:
         track.frame = frame
@@ -319,6 +350,9 @@ class RadarApp(App):
         track.last_frame_time = frame.timestamp
         if self._field_log is not None:
             self._field_log.on_frame(frame, sensor=track.config.name)
+        recorder = self._recorder
+        if recorder is not None:
+            recorder.on_frame(frame, sensor=track.config.name)
 
     def _on_status(self, track: _SensorTrack, state: str, detail: str) -> None:
         track.status = (state, detail)
@@ -379,14 +413,15 @@ class RadarApp(App):
                 active = track.smoother.targets(now)
                 scope.plot_targets(
                     track.config.name,
-                    [(t.slot, t.distance_cm, t.bearing_deg, t.speed_cms != 0) for t in active],
+                    [(t.slot, t.distance_cm, t.bearing_deg, t.speed_cms != 0, t.echo) for t in active],
                     now=now,
                 )
                 prefix = "%s " % track.config.name if multi else ""
-                # "?" marks a target the sensor just lost: last known position.
+                # "?" marks a target the sensor just lost (last known position),
+                # "~" one that is probably a reflection of a nearer target.
                 target_parts += [
                     "%sT%d %.1fm %+.0f°%s" % (prefix, t.slot, t.distance_cm / 100.0, t.bearing_deg,
-                                              "?" if t.held else "")
+                                              "?" if t.held else "~" if t.echo else "")
                     for t in active
                 ]
             elif link_up and isinstance(frame, TargetFrame):
@@ -402,6 +437,13 @@ class RadarApp(App):
         kinds = sorted(set(t.kind for t in self._tracks if t.kind))
         root.sensor_text = " + ".join(kinds) if kinds else "RADAR"
         root.targets_text = "   ".join(target_parts)
+        recorder = self._recorder
+        if recorder is not None:
+            root.rec_text = "REC %d" % recorder.frames
+            root.rec_color = list(RED)
+        else:
+            root.rec_text = "REC"
+            root.rec_color = [0.40, 0.42, 0.40, 1]
 
         root.status_text = "   ".join(status_parts) if status_parts else "STANDBY"
         root.status_color = list(worst_color)
