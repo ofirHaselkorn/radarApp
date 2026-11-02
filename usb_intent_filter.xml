@@ -1,0 +1,9 @@
+<!-- Injected into the main activity by buildozer (android.manifest.intent_filters).
+     Launches the app when a matching USB-serial adapter is attached and
+     pre-grants access to that device, so the permission dialog is skipped. -->
+<intent-filter>
+    <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+</intent-filter>
+<meta-data
+    android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+    android:resource="@xml/device_filter" />

@@ -1,0 +1,6 @@
+# Desktop testing only. On Android these come from buildozer.spec
+# (kivy, pyjnius, usb4a, usbserial4a) and pyserial is not used.
+#
+# Kivy has no wheel for Python 3.14 yet - use Python 3.12 or 3.13 locally.
+kivy==2.3.0
+pyserial>=3.5

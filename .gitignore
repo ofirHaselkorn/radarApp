@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+
+# Build outputs (Android)
+*.apk
+*.aab
+bin/
+.buildozer/
+
+# Runtime
+logs/
+
+# Claude Code local state
+.claude/
